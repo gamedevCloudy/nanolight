@@ -33,6 +33,8 @@ pub const Kind = enum {
     suggest,
     /// Nanolight's own Settings, listed when the query asks for them.
     settings,
+    /// Nanolight's Notch Island tabs (`Row.web`: 0 Home, 1 Agents, 2 Shelf & Notes).
+    island,
     /// A pane of System Settings (`Row.app` its place in settings_panes.zig).
     pane,
 
@@ -43,7 +45,7 @@ pub const Kind = enum {
             .currency => "Currency",
             .app => "Application",
             .file => "File",
-            .settings => "Nanolight",
+            .settings, .island => "Nanolight",
             .pane => "System Settings",
             .ask_grok, .ask_claude, .search_x, .search_web, .suggest => "Web",
         };
@@ -57,6 +59,7 @@ pub const Kind = enum {
             .app => "Open Application",
             .file => "Open",
             .settings => "Open Settings",
+            .island => "Open Island",
             .pane => "Open in System Settings",
             .ask_grok => "Ask Grok",
             .ask_claude => "Ask Claude",
@@ -70,7 +73,7 @@ pub const Kind = enum {
             .calc, .currency => "Calculator",
             .app => if (suggested) "Suggestions" else "Applications",
             .file => "Files",
-            .settings => "Nanolight",
+            .settings, .island => "Nanolight",
             .pane => "System Settings",
             .search_web, .suggest => "Google",
             .ask_grok, .ask_claude, .search_x => "Ask & Search",
@@ -142,22 +145,24 @@ pub const Results = struct {
         var ranked: [max_apps]search.Ranked = undefined;
         const n = search.rankApps(query, ix, boost, &ranked);
         const settings = isSettings(query);
+        const isl_tab = islandTab(query);
+        const own = settings or isl_tab != null;
         // Math and currency keep their answer and matching apps, without handoffs.
         if (r.n > 0 and (r.rows[0].kind == .calc or r.rows[0].kind == .currency)) {
             for (ranked[0..n]) |x| r.push(.{ .kind = .app, .app = x.index, .match = x.match });
             return;
         }
         var pane_rows: [max_panes]search.Ranked = undefined;
-        const np = if (settings) 0 else panes.rank(query, &pane_rows);
+        const np = if (own) 0 else panes.rank(query, &pane_rows);
         // One row pays for each section head beyond the original three, so
         // a full list stays one length.
         const heads: usize = 2 + @as(usize, @intFromBool(n > 0)) + @as(usize, @intFromBool(np > 0)) +
-            @as(usize, @intFromBool(settings)) + @as(usize, @intFromBool(found.n > 0));
+            @as(usize, @intFromBool(own)) + @as(usize, @intFromBool(found.n > 0));
         const limit = max_rows -| (heads -| 3);
         // The web rows that always follow the apps: Google, Grok, X, and
         // Claude when it's on.
         const handoffs: usize = 3 + @as(usize, @intFromBool(r.claude));
-        const fixed = handoffs + @as(usize, @intFromBool(settings));
+        const fixed = handoffs + @as(usize, @intFromBool(own));
         const first_pane: usize = @intFromBool(np > 0);
         const file_row: usize = @intFromBool(found.n > 0);
         // Apps come first. Panes and files are sure of a row each and take
@@ -173,7 +178,7 @@ pub const Results = struct {
         for (ranked[0..app_count]) |x| r.push(.{ .kind = .app, .app = x.index, .match = x.match });
         // "settings" / "preferences": Nanolight's own screen, right under
         // the apps: Return still opens System Settings, a key away from this.
-        if (settings) r.push(.{ .kind = .settings });
+        if (settings) r.push(.{ .kind = .settings }) else if (isl_tab) |t| r.push(.{ .kind = .island, .web = t });
         for (pane_rows[0..pane_count]) |x| r.push(.{ .kind = .pane, .app = x.index, .match = x.match });
         if (!found.exact) for (0..count) |i| {
             r.push(.{ .kind = .file, .file = @intCast(i), .match = found.entries[i].match });
@@ -195,6 +200,16 @@ pub const Results = struct {
         const q = std.mem.trim(u8, query, " ");
         for (keys) |k| if (std.mem.eql(u8, q, k)) return true;
         return false;
+    }
+
+    fn islandTab(query: []const u8) ?u8 {
+        const music_words = [_][]const u8{ "island", "notch", "halo", "music", "now playing", "player", "lyrics", "queue" };
+        for (music_words) |w| if (std.ascii.eqlIgnoreCase(query, w)) return 0;
+        const focus_words = [_][]const u8{ "timer", "pomodoro", "focus", "awake" };
+        for (focus_words) |w| if (std.ascii.eqlIgnoreCase(query, w)) return 1;
+        const shelf_words = [_][]const u8{ "clipboard", "scratchpad", "shelf" };
+        for (shelf_words) |w| if (std.ascii.eqlIgnoreCase(query, w)) return 2;
+        return null;
     }
 
     fn push(r: *Results, row: Row) void {
@@ -219,7 +234,7 @@ pub fn url(buf: []u8, kind: Kind, query: []const u8) []const u8 {
         .ask_claude => "https://claude.ai/new?q=",
         .search_x => "https://x.com/search?f=live&q=",
         .search_web, .suggest => "https://www.google.com/search?q=",
-        .calc, .currency, .app, .file, .settings, .pane => return "",
+        .calc, .currency, .app, .file, .settings, .island, .pane => return "",
     };
     var w: std.Io.Writer = .fixed(buf);
     w.writeAll(base) catch return "";

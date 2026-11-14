@@ -24,6 +24,27 @@ pub fn unanswered(s: *Nanolight, typed: []const u8) void {
     show(s, &known);
 }
 
+/// A rate for `amount from→to` landed: keep it and redraw if still typed.
+pub fn ratesAnswered(s: *Nanolight, amount: f64, from: []const u8, to: []const u8, a: @import("currency.zig").Answer) void {
+    s.fx_cache.put(a);
+    const q = @import("currency.zig").parse(s.query.text()) orelse return;
+    if (q.amount != amount or !std.mem.eql(u8, q.fromSlice(), from) or !std.mem.eql(u8, q.toSlice(), to)) return;
+    s.fx = a;
+    s.fx_pending = false;
+    s.fx_failed = false;
+    s.fill();
+}
+
+/// The rate ask failed or was empty: keep an honest empty answer.
+pub fn ratesFailed(s: *Nanolight, amount: f64, from: []const u8, to: []const u8) void {
+    const q = @import("currency.zig").parse(s.query.text()) orelse return;
+    if (q.amount != amount or !std.mem.eql(u8, q.fromSlice(), from) or !std.mem.eql(u8, q.toSlice(), to)) return;
+    s.fx = null;
+    s.fx_pending = false;
+    s.fx_failed = true;
+    s.fill();
+}
+
 /// `web` (what is known of `typed`), then the rows of `was` that still bear
 /// on it, up to as many as there were.
 pub fn hold(web: *suggest.List, was: *const suggest.List, typed: []const u8) void {

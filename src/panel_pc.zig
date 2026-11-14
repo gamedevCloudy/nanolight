@@ -91,6 +91,7 @@ pub fn resize(w: *nanoui.Window, h: f32, _: anytype) void {
 
 /// The panel draws its own corners here: nothing under it to round.
 pub fn corners(_: f32) void {}
+pub fn setIsland(_: *nanoui.Window, _: bool) void {}
 
 /// After `show`: on X11 the window manager is given the hot key's time, or
 /// it may refuse the panel the focus (focus stealing prevention).

@@ -16,7 +16,7 @@ const Choice = shortcut.Choice;
 const Palette = panel.Palette;
 const mac = @import("builtin").os.tag == .macos;
 
-const RowKind = enum { choice, suggest, files, browser, claude, login, menu_bar, sync, terms, updates, welcome, quit, theme };
+const RowKind = enum { choice, suggest, files, browser, claude, login, menu_bar, island, sync, terms, updates, welcome, quit, theme };
 const Theme = @import("palette.zig").Theme;
 
 /// As tall as its sections, never past the window. Tighter Mac spacing
@@ -42,6 +42,7 @@ pub const Settings = struct {
     claude: bool = false,
     login: bool = false,
     menu_bar: bool = true,
+    island: bool = false,
     account: account.State = .signed_out,
     email: []const u8 = "",
     version: []const u8 = "0.1.0",
@@ -68,6 +69,7 @@ pub const Settings = struct {
         s.files = n.files_on;
         s.browser = n.searches_out;
         s.claude = n.claude_on;
+        s.island = n.island_on;
         const h = s.hooks(n) orelse return;
         s.menu_bar = h.menu_bar(h.ctx, null);
         s.choice = h.choice(h.ctx);
@@ -128,7 +130,7 @@ pub const Settings = struct {
     }
 
     fn body(s: *Settings, c: *ui.Context, n: *panel.Nanolight, p: Palette, rows: []const RowKind) void {
-        const col = ui.div(c).column().wFull().px(20).pt(2).pb(6).gap(if (mac) 6 else 10).grow();
+        const col = ui.div(c).column().wFull().px(20).pt(2).pb(4).gap(if (mac) 4 else 6).grow();
         defer col.end();
         label(c, p, "Open Nanolight with");
         s.choices(c, n, p);
@@ -140,6 +142,7 @@ pub const Settings = struct {
         label(c, p, "This " ++ @import("results.zig").machine);
         s.switchRow(c, n, p, rows, .login, "Open at Login");
         if (mac) s.switchRow(c, n, p, rows, .menu_bar, "Show in Menu Bar");
+        s.switchRow(c, n, p, rows, .island, "Notch Island");
         label(c, p, if (@import("builtin").os.tag == .macos) "Sync Across Macs" else "Sync Across Computers");
         s.sync(c, n, p, rows);
         label(c, p, "Updates");
@@ -209,7 +212,7 @@ pub const Settings = struct {
 
     fn switchRow(s: *Settings, c: *ui.Context, n: *panel.Nanolight, p: Palette, rows: []const RowKind, kind: RowKind, title: []const u8) void {
         const on = isSel(rows, s.sel, kind);
-        const d = ui.div(c).row().wFull().h(if (mac) 32 else 36).px(4).gap(10).itemsCenter().rounded(10).control().bg(if (on) p.sel else p.fill.alpha(0));
+        const d = ui.div(c).row().wFull().h(if (mac) 28 else 32).px(4).gap(10).itemsCenter().rounded(10).control().bg(if (on) p.sel else p.fill.alpha(0));
         defer d.end();
         if (d.clicked()) s.flip(n, kind);
         ui.text(c, title, .{ .size = 13.5, .weight = .medium, .color = p.text });
@@ -221,6 +224,7 @@ pub const Settings = struct {
             .claude => s.claude,
             .login => s.login,
             .menu_bar => s.menu_bar,
+            .island => s.island,
             else => false,
         });
     }
@@ -271,6 +275,16 @@ pub const Settings = struct {
                 const next = !s.menu_bar;
                 s.menu_bar = if (h) |host| host.menu_bar(host.ctx, next) else next;
             },
+            .island => {
+                n.island_on = !n.island_on;
+                s.island = n.island_on;
+                if (!n.island_on) {
+                    n.island.collapsed = false;
+                    n.island.tab = .search;
+                }
+                if (n.kv) |kv| kv.set(@import("island.zig").enabled_key, if (n.island_on) "1" else "0") catch {};
+                if (h) |host| if (host.island) |cb| cb(host.ctx, s.island);
+            },
             else => {},
         }
     }
@@ -313,7 +327,7 @@ pub const Settings = struct {
     fn button(s: *Settings, c: *ui.Context, n: *panel.Nanolight, p: Palette, rows: []const RowKind, kind: RowKind, text: []const u8) void {
         const on = isSel(rows, s.sel, kind);
         ui.key(c, @tagName(kind));
-        const d = ui.div(c).row().wFull().h(36).px(12).gap(8).itemsCenter().rounded(10).control()
+        const d = ui.div(c).row().wFull().h(if (mac) 32 else 34).px(12).gap(8).itemsCenter().rounded(10).control()
             .bg(if (on) p.sel else p.tile.alpha(0.45)).border(p.rim);
         defer d.end();
         if (d.clicked()) s.activate(n, kind);
@@ -389,7 +403,7 @@ pub const Settings = struct {
         switch (kind) {
             // ←/→ step through the four; Return records one's own.
             .choice => if (mac) s.record(n, !s.recording) else s.nudge(n, rowList(s.account), 1),
-            .suggest, .files, .browser, .claude, .login, .menu_bar => s.flip(n, kind),
+            .suggest, .files, .browser, .claude, .login, .menu_bar, .island => s.flip(n, kind),
             .sync => if (h) |host| switch (s.account) {
                 .signed_out => host.sign_in(host.ctx),
                 .waiting, .signed_in => host.sign_out(host.ctx),
@@ -421,8 +435,8 @@ pub fn loadClaude(kv: nanoui.kv.Store, gpa: std.mem.Allocator) bool {
 
 fn rowList(state: account.State) []const RowKind {
     return switch (state) {
-        .signed_out, .starting => if (mac) &.{ .choice, .suggest, .files, .browser, .claude, .login, .menu_bar, .sync, .terms, .updates, .welcome, .quit, .theme } else &.{ .choice, .suggest, .claude, .login, .sync, .terms, .updates, .welcome, .quit, .theme },
-        .waiting, .signed_in => if (mac) &.{ .choice, .suggest, .files, .browser, .claude, .login, .menu_bar, .sync, .updates, .welcome, .quit, .theme } else &.{ .choice, .suggest, .claude, .login, .sync, .updates, .welcome, .quit, .theme },
+        .signed_out, .starting => if (mac) &.{ .choice, .suggest, .files, .browser, .claude, .login, .menu_bar, .island, .sync, .terms, .updates, .welcome, .quit, .theme } else &.{ .choice, .suggest, .claude, .login, .island, .sync, .terms, .updates, .welcome, .quit, .theme },
+        .waiting, .signed_in => if (mac) &.{ .choice, .suggest, .files, .browser, .claude, .login, .menu_bar, .island, .sync, .updates, .welcome, .quit, .theme } else &.{ .choice, .suggest, .claude, .login, .island, .sync, .updates, .welcome, .quit, .theme },
     };
 }
 

@@ -15,6 +15,7 @@ pub var box: SettingsHost = .{
     .searches_out = searchesOut,
     .theme = theme,
     .menu_bar = menuBar,
+    .island = islandMode,
     .account = acct,
     .email = email,
     .sign_in = signIn,
@@ -65,6 +66,18 @@ fn theme(ctx: *anyopaque, t: Theme) void {
 pub fn load(s: *@import("view.zig").Nanolight, kv: nanoui.kv.Store, gpa: @import("std").mem.Allocator) void {
     s.theme = loadTheme(kv, gpa);
     s.claude_on = @import("settings_view.zig").loadClaude(kv, gpa);
+    s.island_on = @import("island.zig").loadEnabled(kv, gpa);
+    @import("island.zig").loadNotes(&s.island, kv, gpa);
+}
+
+fn islandMode(ctx: *anyopaque, on: bool) void {
+    const live = l(ctx);
+    live.s.island_on = on;
+    live.s.has_notch = if (@import("builtin").os.tag == .macos) nanoui.screens.mainHasNotch() else false;
+    if (live.window) |w| {
+        (if (@import("builtin").os.tag == .macos) @import("panel_mac.zig") else @import("panel_pc.zig")).setIsland(w, on);
+        w.redraw();
+    }
 }
 
 /// The theme kept on this Mac, at launch.

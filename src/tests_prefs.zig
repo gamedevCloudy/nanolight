@@ -374,3 +374,61 @@ test "Ask Claude is off until Settings turns it on, and stays as it was left" {
     try std.testing.expect(!t.containsText("Ask Claude"));
     try std.testing.expect(s.sel < s.res.n);
 }
+
+test "the panel never outgrows its window, which is never resized" {
+    const gpa = std.testing.allocator;
+    var ix: Index = .init(gpa);
+    defer ix.deinit();
+    ix.starters = &tests.mac_starters;
+    try tenApps(&ix);
+    var s: view.Nanolight = .{ .index = &ix };
+    defer s.query.deinit();
+    var tallest: f32 = 0;
+    for ([_][]const u8{ "", "a", "s", "ma", "2^10 * 3", "100 USD to EUR", "1+a", "liquid glass" }) |q| {
+        s.query.set(q);
+        s.rebuild();
+        tallest = @max(tallest, s.height());
+    }
+    try std.testing.expect(tallest <= view.max_height);
+    s.query.set("a");
+    s.rebuild();
+    var four: suggest.List = .{};
+    for ([_][]const u8{ "a1", "a2", "a3", "a4" }) |w| four.push(w);
+    s.answered("a", &four);
+    try std.testing.expectEqual(view.rows_height, s.height());
+    const onboard = @import("onboard.zig");
+    var o: onboard.Onboard = .{};
+    for ([_]onboard.Step{ .key, .try_it, .done }) |step| {
+        o.step = step;
+        try std.testing.expect(o.height() <= view.max_height);
+    }
+}
+
+test "on a PC the panel's keys are Ctrl's, and Settings says so" {
+    if (@import("builtin").os.tag == .macos) return error.SkipZigTest;
+    const gpa = std.testing.allocator;
+    var ix: Index = .init(gpa);
+    defer ix.deinit();
+    ix.starters = &tests.mac_starters;
+    try ix.add("Safari", "/Applications/Safari.app");
+    try ix.add("System Settings", "/Applications/System Settings.app");
+    var prefs: tests.Prefs = .{};
+    prefs.init();
+    var s: view.Nanolight = .{ .index = &ix };
+    defer s.query.deinit();
+    s.host = prefs.host();
+    s.reveal();
+    var t: ui.Tester = undefined;
+    try t.init(gpa, .init(&s, view.Nanolight.view), .{ .width = view.width, .height = view.max_height, .dark = true });
+    defer t.deinit();
+    t.settle(1);
+    tests.press(&t, &.{.{ .insert = "s" }});
+    try std.testing.expect(t.hasText("Ctrl+2"));
+    try std.testing.expect(!t.containsText("⌘"));
+    try std.testing.expect(t.shortcut(.{ .key = ',', .ctrl = true }));
+    t.settle(1);
+    try std.testing.expect(s.settings_ui.open);
+    try std.testing.expect(t.hasText("This PC"));
+    try std.testing.expect(t.hasText("Alt Space"));
+    try std.testing.expect(t.hasText("Sync Across Computers"));
+}

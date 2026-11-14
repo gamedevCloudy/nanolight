@@ -57,9 +57,15 @@ pub const ClickThrough = struct {
         if (c.global == null) return;
         if (!w.isVisible()) return c.stop();
         const at = objc.msg(objc.CGPoint, objc.class("NSEvent"), "mouseLocation", .{});
-        const f = objc.msg(objc.CGRect, w.nswindow, "frame", .{});
+        var f = objc.msg(objc.CGRect, w.nswindow, "frame", .{});
         const h: f64 = if (c.height) |p| p.* else 0;
-        c.set(!overPanel(f, at, view.shadow_margin, view.width, h));
+        const island = @import("island.zig");
+        var w_panel: f64 = view.width;
+        if (h > 0 and h <= island.compact_height + 1) {
+            w_panel = island.compact_width;
+            f.origin.x += (view.width - w_panel) / 2;
+        }
+        c.set(!overPanel(f, at, view.shadow_margin, w_panel, h));
     }
 
     fn set(c: *ClickThrough, ignore: bool) void {

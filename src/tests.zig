@@ -29,6 +29,8 @@ test {
     _ = @import("row_window.zig");
     _ = @import("answers.zig");
     _ = @import("tests_panel.zig");
+    _ = @import("island.zig");
+    _ = @import("tests_island.zig");
     switch (@import("builtin").os.tag) {
         .macos => {
             _ = @import("single_mac.zig");
@@ -55,19 +57,19 @@ pub const Probe = struct {
     opened_len: usize = 0,
     hidden: bool = false,
 
-    fn open(ctx: *anyopaque, target: []const u8) void {
+    pub fn open(ctx: *anyopaque, target: []const u8) void {
         const p: *Probe = @ptrCast(@alignCast(ctx));
         @memcpy(p.opened[0..target.len], target);
         p.opened_len = target.len;
     }
-    fn hide(ctx: *anyopaque) void {
+    pub fn hide(ctx: *anyopaque) void {
         const p: *Probe = @ptrCast(@alignCast(ctx));
         p.hidden = true;
     }
 };
 
 /// The Mac's starters, which these tests' apps are named after.
-const mac_starters = [_][]const u8{ "Safari", "Notes", "Calendar", "System Settings", "Finder" };
+pub const mac_starters = [_][]const u8{ "Safari", "Notes", "Calendar", "System Settings", "Finder" };
 
 pub fn press(t: *ui.Tester, ops: []const ui.TextOp) void {
     t.textOps(ops);
@@ -536,7 +538,6 @@ test "settings opens from ⌘,, from typing, and from the gear" {
     try std.testing.expect(s.height() <= view.max_height);
 }
 
-
 test "currency conversion shows ECB rates and copies the amount" {
     const gpa = std.testing.allocator;
     var ix: Index = .init(gpa);
@@ -577,7 +578,7 @@ test "currency conversion shows ECB rates and copies the amount" {
     s.fx = null;
     s.fx_failed = true;
     s.fx_pending = false;
-    press(&t, &.{ .{ .command = .select_all }, .{ .command = .delete_backward }, .{ .insert = "50 SGD to JPY" }});
+    press(&t, &.{ .{ .command = .select_all }, .{ .command = .delete_backward }, .{ .insert = "50 SGD to JPY" } });
     // No host.rates → failed path
     try std.testing.expectEqual(results.Kind.currency, s.res.rows[0].kind);
     try std.testing.expect(t.containsText("Rates unavailable"));
@@ -586,74 +587,12 @@ test "currency conversion shows ECB rates and copies the amount" {
     if (std.c.getenv("NANOLIGHT_FX_SHOT")) |path| {
         // Restore a real answer for the shot.
         s.fx_cache.put(ans);
-        press(&t, &.{ .{ .command = .select_all }, .{ .command = .delete_backward }, .{ .insert = "100 USD to EUR" }});
+        press(&t, &.{ .{ .command = .select_all }, .{ .command = .delete_backward }, .{ .insert = "100 USD to EUR" } });
         try t.screenshot(std.mem.span(path));
     }
     if (std.c.getenv("NANOLIGHT_THEME_SHOT")) |path| {
         s.theme = .ocean;
-        press(&t, &.{ .{ .command = .select_all }, .{ .command = .delete_backward }, .{ .insert = "saf" }});
+        press(&t, &.{ .{ .command = .select_all }, .{ .command = .delete_backward }, .{ .insert = "saf" } });
         try t.screenshot(std.mem.span(path));
     }
-}
-
-test "the panel never outgrows its window, which is never resized" {
-    const gpa = std.testing.allocator;
-    var ix: Index = .init(gpa);
-    defer ix.deinit();
-    ix.starters = &mac_starters;
-    for ([_][]const u8{ "Safari", "Mail", "Maps", "Music", "Notes", "Numbers", "Pages", "Photos", "Calendar", "Calculator" }) |n| {
-        var buf: [64]u8 = undefined;
-        try ix.add(n, try std.fmt.bufPrint(&buf, "/Applications/{s}.app", .{n}));
-    }
-    var s: view.Nanolight = .{ .index = &ix };
-    defer s.query.deinit();
-    var tallest: f32 = 0;
-    for ([_][]const u8{ "", "a", "s", "ma", "2^10 * 3", "100 USD to EUR", "1+a", "liquid glass" }) |q| {
-        s.query.set(q);
-        s.rebuild();
-        tallest = @max(tallest, s.height());
-    }
-    try std.testing.expect(tallest <= view.max_height);
-    // "a" fills every app row there is, and Google's completions the
-    // rest: they scroll, and the panel keeps its height.
-    s.query.set("a");
-    s.rebuild();
-    var four: @import("suggest.zig").List = .{};
-    for ([_][]const u8{ "a1", "a2", "a3", "a4" }) |w| four.push(w);
-    s.answered("a", &four);
-    try std.testing.expectEqual(view.rows_height, s.height());
-    var o: onboard.Onboard = .{};
-    for ([_]onboard.Step{ .key, .try_it, .done }) |step| {
-        o.step = step;
-        try std.testing.expect(o.height() <= view.max_height);
-    }
-}
-
-test "on a PC the panel's keys are Ctrl's, and Settings says so" {
-    if (@import("builtin").os.tag == .macos) return error.SkipZigTest;
-    const gpa = std.testing.allocator;
-    var ix: Index = .init(gpa);
-    defer ix.deinit();
-    ix.starters = &mac_starters;
-    try ix.add("Safari", "/Applications/Safari.app");
-    try ix.add("System Settings", "/Applications/System Settings.app");
-    var prefs: Prefs = .{};
-    prefs.init();
-    var s: view.Nanolight = .{ .index = &ix };
-    defer s.query.deinit();
-    s.host = prefs.host();
-    s.reveal();
-    var t: ui.Tester = undefined;
-    try t.init(gpa, .init(&s, view.Nanolight.view), .{ .width = view.width, .height = view.max_height, .dark = true });
-    defer t.deinit();
-    t.settle(1);
-    press(&t, &.{.{ .insert = "s" }});
-    try std.testing.expect(t.hasText("Ctrl+2"));
-    try std.testing.expect(!t.containsText("⌘"));
-    try std.testing.expect(t.shortcut(.{ .key = ',', .ctrl = true }));
-    t.settle(1);
-    try std.testing.expect(s.settings_ui.open);
-    try std.testing.expect(t.hasText("This PC"));
-    try std.testing.expect(t.hasText("Alt Space"));
-    try std.testing.expect(t.hasText("Sync Across Computers"));
 }

@@ -16,11 +16,14 @@ var glass: ?objc.Object = null;
 var wanted: ?f32 = null;
 var page_to: ?bool = null;
 var page: ?*Preview = null;
+var island_mode: bool = false;
+var panel_radius: f32 = 16;
 
 pub fn adjust(o: *nanoui.WindowOptions, hidden: bool, h: f32) void {
     o.width = if (hidden) view.width else view.width + 2 * view.shadow_margin;
     o.height = if (hidden) h else view.max_height + 2 * view.shadow_margin;
     o.title_bar = .popover;
+    o.stationary = true;
 }
 
 pub fn setup(app: *nanoui.App, w: *nanoui.Window, s: *view.Nanolight, h: f32) void {
@@ -30,6 +33,10 @@ pub fn setup(app: *nanoui.App, w: *nanoui.Window, s: *view.Nanolight, h: f32) vo
     // mode gets a hard black outline round its pixels.
     s.margin = view.shadow_margin;
     s.window_fades = true;
+    s.has_notch = nanoui.screens.mainHasNotch();
+    island_mode = s.island_on;
+    panel_radius = s.theme.radius();
+    if (notchHere()) w.setLevel(.island);
     objc.msg(void, w.nswindow, "setHasShadow:", .{objc.NO});
     glass = backdrop(w, s.theme.radius(), h);
     if (w.surface) |surface| {
@@ -39,14 +46,27 @@ pub fn setup(app: *nanoui.App, w: *nanoui.Window, s: *view.Nanolight, h: f32) vo
     }
 }
 
+fn notchHere() bool {
+    return island_mode and nanoui.screens.mainHasNotch();
+}
+
+pub fn setIsland(w: *nanoui.Window, on: bool) void {
+    island_mode = on;
+    w.setLevel(if (notchHere()) .island else .pop_up_menu);
+    place(w);
+    if (w.isVisible()) objc.msg(void, w.nswindow, "setAlphaValue:", .{@as(f64, 1)});
+}
+
 /// The glass's corners to the theme's, as the panel's follow it.
 pub fn corners(radius: f32) void {
+    panel_radius = radius;
     const g = glass orelse return;
     const layer = objc.msg(?objc.Object, g, "layer", .{}) orelse return;
     objc.msg(void, layer, "setCornerRadius:", .{@as(f64, radius)});
 }
 
-/// A fifth of the way down the main screen, centered.
+/// A fifth of the way down the main screen (or at the top notch edge when
+/// on a notched MacBook with Notch Island enabled), centered.
 pub fn place(w: *nanoui.Window) void {
     const screen = objc.msg(?objc.Object, objc.class("NSScreen"), "mainScreen", .{}) orelse return;
     const f = objc.msg(objc.CGRect, screen, "frame", .{});
@@ -54,8 +74,9 @@ pub fn place(w: *nanoui.Window) void {
     const primary = objc.msg(objc.Object, screens, "objectAtIndex:", .{@as(objc.NSUInteger, 0)});
     const ph = objc.msg(objc.CGRect, primary, "frame", .{}).size.height;
     const top = ph - (f.origin.y + f.size.height);
-    // The panel there; the window is the shadow's margin bigger.
-    w.setPosition(f.origin.x + (f.size.width - view.width) / 2 - view.shadow_margin, top + f.size.height * 0.2 - view.shadow_margin);
+    // Only pin to the top edge when the display actually has a physical notch.
+    const y_off: f64 = if (notchHere()) 0 else f.size.height * 0.2;
+    w.setPosition(f.origin.x + (f.size.width - view.width) / 2 - view.shadow_margin, top + y_off - view.shadow_margin);
     // Unseen as it orders in: it still holds the frame it hid with, until
     // the next one is drawn (issue #9). `shown` fades it in.
     objc.msg(void, w.nswindow, "setAlphaValue:", .{@as(f64, 0)});
@@ -117,7 +138,13 @@ fn afterFrame(_: ?*anyopaque, s: *nanoui.Surface) bool {
     // The glass's own layers would otherwise ease to their new size.
     objc.msg(void, objc.class("CATransaction"), "setDisableActions:", .{objc.YES});
     if (wanted) |h| {
-        if (glass) |g| objc.msg(void, g, "setFrame:", .{glassFrame(h)});
+        if (glass) |g| {
+            const island = @import("island.zig");
+            const collapsed_pill = notchHere() and h <= island.compact_height + 1;
+            objc.msg(void, g, "setHidden:", .{if (collapsed_pill) objc.YES else objc.NO});
+            objc.msg(void, g, "setFrame:", .{glassFrame(h)});
+            if (objc.msg(?objc.Object, g, "layer", .{})) |layer| objc.msg(void, layer, "setCornerRadius:", .{@as(f64, panel_radius)});
+        }
         if (page) |p| p.fit(h);
     }
     if (page) |p| if (page_to) |on| if (on) p.uncover() else p.hide();
@@ -187,6 +214,11 @@ fn backdrop(w: *nanoui.Window, radius: f64, height: f32) ?objc.Object {
 /// Where the glass goes: under the panel, the shadow's margin in.
 fn glassFrame(h: f32) objc.CGRect {
     const m = view.shadow_margin;
+    const island = @import("island.zig");
+    if (island_mode and h <= island.compact_height + 1) {
+        const cw = island.compact_width;
+        return .{ .origin = .{ .x = m + (view.width - cw) / 2, .y = m }, .size = .{ .width = cw, .height = h } };
+    }
     return .{ .origin = .{ .x = m, .y = m }, .size = .{ .width = view.width, .height = h } };
 }
 

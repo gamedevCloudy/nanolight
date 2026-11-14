@@ -23,6 +23,8 @@ pub const SettingsHost = struct {
     theme: *const fn (ctx: *anyopaque, t: Theme) void,
     /// Whether the menu bar icon shows; `set` changes it first.
     menu_bar: *const fn (ctx: *anyopaque, set: ?bool) bool,
+    /// Optional Notch Island mode toggled in Settings.
+    island: ?*const fn (ctx: *anyopaque, on: bool) void = null,
     account: *const fn (ctx: *anyopaque) account.State,
     email: *const fn (ctx: *anyopaque) []const u8,
     sign_in: *const fn (ctx: *anyopaque) void,

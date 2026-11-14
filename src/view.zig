@@ -98,6 +98,12 @@ pub const Nanolight = struct {
     searches_out: bool = false,
     /// Claude's row is listed, under Grok's (`nanolight.claude`).
     claude_on: bool = false,
+    /// Optional Notch Island mode (`nanolight.island`).
+    island_on: bool = false,
+    /// Whether the active display actually has a physical camera notch
+    /// (true on notched MacBooks, false on desktop Macs / external monitors).
+    has_notch: bool = true,
+    island: @import("island.zig").Island = .{},
     /// The panel's tint, chosen in Settings (`nanolight.theme`).
     theme: Theme = .system,
     /// Each showing gets a new one: the panel comes in again.
@@ -142,6 +148,8 @@ pub const Nanolight = struct {
     pub fn reveal(s: *Nanolight) void {
         s.back();
         s.settings_ui.hide();
+        s.island.collapsed = false;
+        s.island.tab = .search;
         s.shown +%= 1;
         // Suggestions follow what was opened since.
         s.built = 1;
@@ -150,10 +158,17 @@ pub const Nanolight = struct {
         s.query.focus();
     }
 
+    /// True only when Notch Island is enabled AND this display has a notch.
+    pub fn notchActive(s: *const Nanolight) bool {
+        return s.island_on and s.has_notch;
+    }
+
     /// The panel's height for what it shows.
     pub fn height(s: *const Nanolight) f32 {
+        if (s.notchActive() and s.island.collapsed) return @import("island.zig").compact_height;
         if (s.settings_ui.open) return settings_view.height;
         if (s.ext) |e| if (e.open) return e.height();
+        if (s.island.tab != .search) return @import("island_view.zig").expanded_height;
         if (s.previewing) return max_height;
         return rows_height;
     }
@@ -170,6 +185,7 @@ pub const Nanolight = struct {
 
     pub fn panel(s: *Nanolight, c: *ui.Context) void {
         const p = palette(c.theme.dark, s.theme);
+        if (s.notchActive() and s.island.collapsed) return @import("island_view.zig").compact(s, c, p);
         const shell = ui.div(c).column().w(width).rounded(s.theme.radius()).border(p.hair).clip();
         if (s.own_glass) {
             _ = shell.glass(.{ .tint = @import("palette.zig").tint(c.theme.dark, s.theme) })
@@ -194,6 +210,7 @@ pub const Nanolight = struct {
         if (s.settings_ui.open) return s.settings_ui.inPanel(c, s, p);
         // A Raycast extension's command, while it runs (raycast_view.zig).
         if (s.ext) |e| if (e.open) return e.panel(c, s, p);
+        if (s.island.tab != .search) return @import("island_view.zig").inPanel(s, c, p);
 
         s.keys(c);
         const submitted = s.header(c, p);
@@ -259,7 +276,7 @@ pub const Nanolight = struct {
             s.activate(c);
         };
         if (c.shortcut(.{ .key = S.escape })) {
-            if (s.query.text().len > 0) s.query.clear() else if (s.host) |h| h.hide(h.ctx);
+            if (s.query.text().len > 0) s.query.clear() else if (s.notchActive()) s.island.collapsed = true else if (s.host) |h| h.hide(h.ctx);
         }
     }
 
@@ -278,6 +295,7 @@ pub const Nanolight = struct {
             .placeholder_color = p.sub.alpha(0.75),
             .color = p.text,
         });
+        if (s.island_on) @import("island_view.zig").headerChips(s, c, p);
         return r.submitted;
     }
 
@@ -372,28 +390,9 @@ pub const Nanolight = struct {
 
     pub const answered = answers.answered;
     pub const unanswered = answers.unanswered;
+    pub const ratesAnswered = answers.ratesAnswered;
+    pub const ratesFailed = answers.ratesFailed;
     pub const filesAnswered = files_view.filesAnswered;
-
-    /// A rate for `amount from→to` landed: keep it and redraw if still typed.
-    pub fn ratesAnswered(s: *Nanolight, amount: f64, from: []const u8, to: []const u8, a: @import("currency.zig").Answer) void {
-        s.fx_cache.put(a);
-        const q = @import("currency.zig").parse(s.query.text()) orelse return;
-        if (q.amount != amount or !std.mem.eql(u8, q.fromSlice(), from) or !std.mem.eql(u8, q.toSlice(), to)) return;
-        s.fx = a;
-        s.fx_pending = false;
-        s.fx_failed = false;
-        s.fill();
-    }
-
-    /// The rate ask failed or was empty: keep an honest empty answer.
-    pub fn ratesFailed(s: *Nanolight, amount: f64, from: []const u8, to: []const u8) void {
-        const q = @import("currency.zig").parse(s.query.text()) orelse return;
-        if (q.amount != amount or !std.mem.eql(u8, q.fromSlice(), from) or !std.mem.eql(u8, q.toSlice(), to)) return;
-        s.fx = null;
-        s.fx_pending = false;
-        s.fx_failed = true;
-        s.fill();
-    }
 
     fn list(s: *Nanolight, c: *ui.Context, p: Palette) void {
         const box = ui.div(c).column().wFull().h(list_h).p(list_pad);
@@ -427,120 +426,8 @@ pub const Nanolight = struct {
         }
     }
 
-    fn row(s: *Nanolight, c: *ui.Context, p: Palette, i: usize, r: Row) void {
-        const big = r.kind == .calc or r.kind == .currency;
-        const d = ui.div(c).row().wFull().h(if (big) calc_h else row_h).px(10).gap(12).itemsCenter().control();
-        defer d.end();
-        if (i == s.sel) _ = d.rounded(10).bg(p.sel).border(p.rim);
-        if (d.clicked()) {
-            s.sel = i;
-            s.activate(c);
-        }
-        if (r.kind == .calc or r.kind == .currency) return s.calcCard(c, p);
-        s.tile(c, p, r);
-        const q = s.query.text();
-        switch (r.kind) {
-            .calc, .currency => unreachable,
-            .app => {
-                const a = s.index.apps.items[r.app];
-                ui.richText(c, a.name, s.highlight(i, r, p), .{ .size = 13.5, .weight = .medium, .color = p.text.alpha(0.82) });
-                ui.text(c, a.folder, .{ .size = 12, .color = p.sub.alpha(0.8) });
-            },
-            .pane => {
-                const pane = @import("settings_panes.zig").all[r.app];
-                ui.richText(c, pane.name, s.highlight(i, r, p), .{ .size = 13.5, .weight = .medium, .color = p.text.alpha(0.82) });
-                ui.text(c, "System Settings", .{ .size = 12, .color = p.sub.alpha(0.8) });
-            },
-            .file => files_view.row(s, c, p, i, r),
-            .settings => {
-                ui.text(c, "Nanolight Settings", .{ .size = 13.5, .weight = .medium, .color = p.text });
-                ui.text(c, "Shortcut, sync, updates", .{ .size = 12, .color = p.sub.alpha(0.8) });
-            },
-            .suggest => {
-                const w = s.web.get(r.web);
-                ui.richText(c, w, s.added(i, w, p), .{ .size = 13.5, .color = p.text.alpha(0.72), .truncate = .ellipsis });
-            },
-            .ask_grok, .ask_claude, .search_x, .search_web => {
-                const verb = switch (r.kind) {
-                    .ask_grok => "Ask Grok",
-                    .ask_claude => "Ask Claude",
-                    .search_x => "Search X for",
-                    else => "Search Google for",
-                };
-                ui.textf(c, .{ .size = 13.5, .weight = .medium, .color = p.text, .truncate = .ellipsis }, "{s} “{s}”", .{ verb, std.mem.trim(u8, q, " ") });
-                ui.text(c, switch (r.kind) {
-                    .ask_grok => "grok.com",
-                    .ask_claude => "claude.ai",
-                    .search_x => "x.com · Latest",
-                    else => "google.com",
-                }, .{ .size = 12, .color = p.sub.alpha(0.8) });
-            },
-        }
-        ui.spacer(c);
-        if (i == s.sel) {
-            ui.text(c, if (r.kind == .app or r.kind == .file or r.kind == .settings or r.kind == .pane) "Open" else "Go", .{ .size = 12, .weight = .medium, .color = p.sub });
-            ui.kbd(c, "↩");
-        } else if (i < 9) ui.textf(c, .{ .size = 12, .weight = .medium, .color = p.sub.alpha(0.5), .tabular = true }, "{s}{d}", .{ results.mod, i + 1 });
-    }
-
-    fn calcCard(s: *Nanolight, c: *ui.Context, p: Palette) void {
-        @import("calc_card.zig").draw(c, p, s.query.text(), s.res.answer, s.res.hex, c.time - s.copied_at < 1.4);
-    }
-
-    /// The row's picture: the app's icon, or a symbol on a quiet tile.
-    fn tile(s: *Nanolight, c: *ui.Context, p: Palette, r: Row) void {
-        // A pane: System Settings' own icon.
-        const app = if (r.kind == .pane) s.index.find("System Settings") else if (r.kind == .app) r.app else null;
-        if (app) |a| if (s.index.icon(a)) |png| {
-            const box = ui.div(c).size(26, 26).center();
-            defer box.end();
-            _ = ui.image(c, .{ .key = s.index.apps.items[a].path, .bytes = png, .max_width = 26, .max_height = 26, .radius = 0, .scale = 1 });
-            return;
-        };
-        if (r.kind == .file) return files_view.tile(s, c, p, r);
-        const big = r.kind == .calc or r.kind == .currency;
-        const side: f32 = if (big) 34 else 26;
-        const box = ui.div(c).size(side, side).rounded(if (big) 9 else 7).bg(p.tile).center();
-        defer box.end();
-        if (r.kind == .search_x) {
-            ui.text(c, "𝕏", .{ .size = 15, .weight = .bold, .color = p.text });
-            return;
-        }
-        ui.icon(c, switch (r.kind) {
-            .calc => "plus.forwardslash.minus",
-            .currency => "plus.forwardslash.minus",
-            .ask_grok => "sparkles",
-            .ask_claude => "sun.max",
-            .search_web => "globe",
-            .suggest => "magnifyingglass",
-            .settings => "gearshape",
-            else => "app.dashed",
-        }, .{ .size = if (big) 16 else 13, .weight = .medium, .color = p.text });
-    }
-
-    /// The matched letters, full strength and heavier.
-    pub fn highlight(s: *Nanolight, i: usize, r: Row, p: Palette) []const ui.Span {
-        const hits = r.match.matched();
-        var n: usize = 0;
-        var k: usize = 0;
-        while (k < hits.len and n < s.spans[i].len) {
-            var end = k + 1;
-            while (end < hits.len and hits[end] == hits[end - 1] + 1) end += 1;
-            s.spans[i][n] = .{ .start = hits[k], .end = @as(u32, hits[end - 1]) + 1, .color = p.text, .weight = .semibold };
-            n += 1;
-            k = end;
-        }
-        return s.spans[i][0..n];
-    }
-
-    /// A completion as a search box shows it: the words typed plain, what
-    /// it adds stronger.
-    fn added(s: *Nanolight, i: usize, w: []const u8, p: Palette) []const ui.Span {
-        const q = std.mem.trim(u8, s.query.text(), " ");
-        if (q.len == 0 or w.len <= q.len or !text.utf8StartsWithFold(w, q)) return &.{};
-        s.spans[i][0] = .{ .start = @intCast(q.len), .end = @intCast(w.len), .color = p.text, .weight = .semibold };
-        return s.spans[i][0..1];
-    }
+    pub const highlight = @import("calc_card.zig").highlight;
+    const row = @import("calc_card.zig").row;
 
     fn footer(s: *Nanolight, c: *ui.Context, p: Palette) void {
         ui.div(c).wFull().h(1).bg(p.hair).end();
@@ -581,14 +468,18 @@ pub const Nanolight = struct {
             .calc => {
                 var buf: [64]u8 = undefined;
                 const v = @import("calc.zig").eval(s.query.text()) orelse return;
-                c.clipboard.write(c.clipboard.ctx, @import("calc.zig").format(&buf, v, false));
+                const formatted = @import("calc.zig").format(&buf, v, false);
+                c.clipboard.write(c.clipboard.ctx, formatted);
+                s.island.captureClip(formatted);
                 s.copied_at = c.time;
                 return;
             },
             .currency => {
                 const a = s.fx orelse return;
                 var buf: [64]u8 = undefined;
-                c.clipboard.write(c.clipboard.ctx, @import("currency.zig").format(&buf, a.value, false));
+                const formatted = @import("currency.zig").format(&buf, a.value, false);
+                c.clipboard.write(c.clipboard.ctx, formatted);
+                s.island.captureClip(formatted);
                 s.copied_at = c.time;
                 return;
             },
@@ -600,6 +491,15 @@ pub const Nanolight = struct {
             .ask_grok, .ask_claude, .search_x => s.go(results.url(&s.url_buf, r.kind, s.query.text())),
             .search_web => s.search(s.query.text(), !s.searches_out),
             .settings => s.openSettings(),
+            .island => {
+                s.back();
+                s.island.collapsed = false;
+                s.island.tab = switch (r.web) {
+                    1 => .focus,
+                    2 => .shelf,
+                    else => .music,
+                };
+            },
             .pane => s.go(@import("settings_panes.zig").urls[r.app]),
             .suggest => {
                 // Its words fill the field, as a search box's would.
