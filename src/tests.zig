@@ -33,6 +33,7 @@ test {
     switch (@import("builtin").os.tag) {
         .macos => {
             _ = @import("single_mac.zig");
+            _ = @import("clipboard_mac.zig");
             _ = @import("clickthrough.zig");
             _ = @import("panel_mac.zig");
             _ = @import("ime_level.zig");
