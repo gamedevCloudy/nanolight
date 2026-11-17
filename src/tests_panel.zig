@@ -293,4 +293,9 @@ test "the clipboard's history: filtered, walked, deleted, copied, left" {
     t.frame();
     try expect(!s.clip.open);
     try expect(t.hasText("Search apps, do math, ask Grok…"));
+    // Its row, from the search, opens it too.
+    tests.press(&t, &.{.{ .insert = "clipboard" }});
+    try std.testing.expectEqual(results.Kind.clipboard, s.res.rows[s.sel].kind);
+    t.textOps(&.{.{ .command = .insert_newline }});
+    try expect(s.clip.open);
 }

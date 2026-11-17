@@ -614,7 +614,7 @@ pub const Nanolight = struct {
             .ask_grok, .ask_claude, .search_x => s.go(results.url(&s.url_buf, r.kind, s.query.text())),
             .search_web => s.search(s.query.text(), !s.searches_out),
             .settings => s.openSettings(),
-            .clipboard => {}, // the clipboard view opens it (clip/view)
+            .clipboard => s.openClipboard(),
             .pane => s.go(@import("settings_panes.zig").urls[r.app]),
             .suggest => {
                 // Its words fill the field, as a search box's would.
