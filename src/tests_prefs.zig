@@ -103,7 +103,7 @@ test "Settings hides the menu bar icon and sends searches out (issues #8, #10)" 
     t.settle(1);
     try std.testing.expect(prefs.menu_bar_on and !s.searches_out and !prefs.searches_out.?);
     // The rows fit: the last one is inside Settings, Settings in the window.
-    const quit = t.findText("Quit Nanolight").?;
+    const quit = t.findText("Back").?;
     try std.testing.expect(quit.y + quit.h <= settings_view.height);
     try std.testing.expect(settings_view.height <= view.max_height);
 }
@@ -351,7 +351,7 @@ test "Ask Claude is off until Settings turns it on, and stays as it was left" {
     try t.clickText("Ask Claude");
     t.settle(1);
     // The switch and everything under it fit Settings, on every platform.
-    const quit = t.findText("Quit Nanolight").?;
+    const quit = t.findText("Back").?;
     try std.testing.expect(quit.y + quit.h <= settings_view.height);
     try std.testing.expect(settings_view.height <= view.max_height);
     try std.testing.expect(s.claude_on and settings_view.loadClaude(mem.store(), gpa));
@@ -397,10 +397,19 @@ test "Clipboard History is a Settings switch: off clears what it holds, and the 
     s.openSettings();
     t.settle(1);
     try std.testing.expect(hist.on);
-    // The row's there, and the bottom of Settings still fits.
-    const quit = t.findText("Quit Nanolight").?;
-    try std.testing.expect(quit.y + quit.h <= settings_view.height);
+    // The row's there, and the footer stays inside the panel.
+    const back = t.findText("Back").?;
+    try std.testing.expect(back.y + back.h <= settings_view.height);
     try std.testing.expect(settings_view.height <= view.max_height);
+    // ↓ to the last row scrolls it into view; the footer hasn't moved.
+    while (!t.containsText("Quit Nanolight")) {
+        _ = t.shortcut(.{ .key = ui.Shortcut.down });
+        t.settle(1);
+        try std.testing.expect(s.settings_ui.sel < 20);
+    }
+    try std.testing.expectEqual(back.y, t.findText("Back").?.y);
+    const quit = t.findText("Quit Nanolight").?;
+    try std.testing.expect(quit.y + quit.h <= back.y);
     try t.clickText("Clipboard History");
     t.settle(1);
     try std.testing.expect(!hist.on and hist.items.items.len == 0);

@@ -10,6 +10,7 @@ const nanoui = @import("nanoui");
 const ui = nanoui.ui;
 const panel = @import("view.zig");
 const shortcut = @import("shortcut.zig");
+const row_window = @import("row_window.zig");
 const account = @import("account.zig");
 const SettingsHost = @import("settings_host.zig").SettingsHost;
 const Choice = shortcut.Choice;
@@ -21,7 +22,7 @@ const Theme = @import("palette.zig").Theme;
 
 /// As tall as its sections, never past the window. Tighter Mac spacing
 /// fits file search, where searches open, Claude's row and the menu bar icon.
-pub const height: f32 = if (mac) 674 else 620;
+pub const height: f32 = if (mac) panel.max_height else 620;
 
 pub const Settings = struct {
     open: bool = false,
@@ -43,6 +44,7 @@ pub const Settings = struct {
     claude: bool = false,
     login: bool = false,
     menu_bar: bool = true,
+    in_view: row_window.Window = .{},
     account: account.State = .signed_out,
     email: []const u8 = "",
     version: []const u8 = "0.1.0",
@@ -51,6 +53,7 @@ pub const Settings = struct {
     pub fn show(s: *Settings) void {
         s.open = true;
         s.sel = 0;
+        s.in_view = .{};
     }
 
     pub fn hide(s: *Settings) void {
@@ -129,26 +132,96 @@ pub const Settings = struct {
         h.theme(h.ctx, t);
     }
 
+    /// What the body is made of, in order: each one whole row of the window
+    /// (row_window.zig), so Settings scrolls as the results do and the
+    /// footer stays where it is.
+    const Item = struct {
+        what: enum { label, choices, toggle, info, note, button, terms },
+        row: RowKind = .choice,
+        text: []const u8 = "",
+        h: f32,
+    };
+
+    const gap: f32 = if (mac) 6 else 10;
+    /// The body's padding, top and bottom.
+    const pad: f32 = 8;
+
+    fn items(s: *Settings, c: *ui.Context, n: *panel.Nanolight, buf: *[24]Item) []const Item {
+        var k: usize = 0;
+        const th: f32 = if (mac) 32 else 36;
+        const add = struct {
+            fn at(b: *[24]Item, i: *usize, it: Item) void {
+                b[i.*] = it;
+                b[i.*].h += gap;
+                i.* += 1;
+            }
+        }.at;
+        add(buf, &k, .{ .what = .label, .text = "Open Nanolight with", .h = 14 });
+        add(buf, &k, .{ .what = .choices, .h = 36 });
+        add(buf, &k, .{ .what = .label, .text = "Search", .h = 14 });
+        add(buf, &k, .{ .what = .toggle, .row = .suggest, .text = "Google Suggestions", .h = th });
+        if (mac) add(buf, &k, .{ .what = .toggle, .row = .files, .text = "File Search", .h = th });
+        if (n.history != null) add(buf, &k, .{ .what = .toggle, .row = .cbhist, .text = "Clipboard History", .h = th });
+        if (mac) add(buf, &k, .{ .what = .toggle, .row = .browser, .text = "Open Searches in Browser", .h = th });
+        add(buf, &k, .{ .what = .toggle, .row = .claude, .text = "Ask Claude", .h = th });
+        add(buf, &k, .{ .what = .label, .text = "This " ++ @import("results.zig").machine, .h = 14 });
+        add(buf, &k, .{ .what = .toggle, .row = .login, .text = "Open at Login", .h = th });
+        if (mac) add(buf, &k, .{ .what = .toggle, .row = .menu_bar, .text = "Show in Menu Bar", .h = th });
+        add(buf, &k, .{ .what = .label, .text = if (mac) "Sync Across Macs" else "Sync Across Computers", .h = 14 });
+        switch (s.account) {
+            .signed_out, .starting => {
+                add(buf, &k, .{ .what = .button, .row = .sync, .text = if (s.account == .starting) "Signing In…" else "Sign In with Codegraff", .h = 36 });
+                add(buf, &k, .{ .what = .terms, .h = 28 });
+            },
+            .waiting => {
+                add(buf, &k, .{ .what = .info, .text = "Approve in your browser…", .h = 17 });
+                add(buf, &k, .{ .what = .button, .row = .sync, .text = "Cancel", .h = 36 });
+            },
+            .signed_in => {
+                add(buf, &k, .{ .what = .info, .text = c.print("Synced as {s}", .{if (s.email.len > 0) s.email else "your Codegraff account"}), .h = 17 });
+                add(buf, &k, .{ .what = .button, .row = .sync, .text = "Sign Out", .h = 36 });
+            },
+        }
+        add(buf, &k, .{ .what = .label, .text = "Updates", .h = 14 });
+        add(buf, &k, .{ .what = .note, .text = c.print("Nanolight {s}", .{s.version}), .h = 15 });
+        add(buf, &k, .{ .what = .button, .row = .updates, .text = if (s.ready) |v| c.print("Restart to Update to {s}", .{v}) else "Check for Updates", .h = 36 });
+        add(buf, &k, .{ .what = .button, .row = .welcome, .text = "Show Welcome Again", .h = 36 });
+        add(buf, &k, .{ .what = .button, .row = .quit, .text = "Quit Nanolight", .h = 36 });
+        return buf[0..k];
+    }
+
     fn body(s: *Settings, c: *ui.Context, n: *panel.Nanolight, p: Palette, rows: []const RowKind) void {
-        const col = ui.div(c).column().wFull().px(20).pt(2).pb(6).gap(if (mac) 4 else 10).grow();
+        var buf: [24]Item = undefined;
+        const all = s.items(c, n, &buf);
+        var heights: [24]f32 = undefined;
+        // The selected row's item; the theme, up in the header, keeps the end.
+        var sel = all.len - 1;
+        for (all, 0..) |it, i| {
+            heights[i] = it.h;
+            if (s.sel < rows.len and it.what != .label and it.row == rows[s.sel]) sel = i;
+        }
+        const room = height - panel.header_h - panel.footer_h - 1 - pad;
+        c.wants_wheel = true;
+        s.in_view.update(heights[0..all.len], sel, @as(u32, @intCast(all.len)) << 8 | @intFromEnum(s.account), room, c.input.scroll.y, c.input.precise);
+        const first = s.in_view.first;
+        const after = row_window.end(heights[0..all.len], first, room);
+        const col = ui.div(c).column().wFull().px(20).pt(2).pb(6).gap(gap).grow().clip();
         defer col.end();
-        label(c, p, "Open Nanolight with");
-        s.choices(c, n, p);
-        label(c, p, "Search");
-        s.switchRow(c, n, p, rows, .suggest, "Google Suggestions");
-        if (mac) s.switchRow(c, n, p, rows, .files, "File Search");
-        if (n.history != null) s.switchRow(c, n, p, rows, .cbhist, "Clipboard History");
-        if (mac) s.switchRow(c, n, p, rows, .browser, "Open Searches in Browser");
-        s.switchRow(c, n, p, rows, .claude, "Ask Claude");
-        label(c, p, "This " ++ @import("results.zig").machine);
-        s.switchRow(c, n, p, rows, .login, "Open at Login");
-        if (mac) s.switchRow(c, n, p, rows, .menu_bar, "Show in Menu Bar");
-        label(c, p, if (@import("builtin").os.tag == .macos) "Sync Across Macs" else "Sync Across Computers");
-        s.sync(c, n, p, rows);
-        label(c, p, "Updates");
-        s.updates(c, n, p, rows);
-        s.button(c, n, p, rows, .welcome, "Show Welcome Again");
-        s.button(c, n, p, rows, .quit, "Quit Nanolight");
+        for (all[first..after]) |it| switch (it.what) {
+            .label => label(c, p, it.text),
+            .choices => s.choices(c, n, p),
+            .toggle => s.switchRow(c, n, p, rows, it.row, it.text),
+            .info => ui.text(c, it.text, .{ .size = 13.5, .weight = .medium, .color = p.text }),
+            .note => ui.text(c, it.text, .{ .size = 12.5, .color = p.sub }),
+            .button => s.button(c, n, p, rows, it.row, it.text),
+            .terms => s.termsLine(c, n, p, rows),
+        };
+        // More than fits: where the rows in view are in the list.
+        if (after - first < all.len) {
+            const per = room / @as(f32, @floatFromInt(all.len));
+            ui.div(c).absolute().offset(panel.width - 30, per * @as(f32, @floatFromInt(first))).w(3)
+                .h(per * @as(f32, @floatFromInt(after - first))).roundedFull().bg(p.sub.alpha(0.35)).end();
+        }
     }
 
     fn label(c: *ui.Context, p: Palette, name: []const u8) void {
@@ -284,24 +357,6 @@ pub const Settings = struct {
         }
     }
 
-    fn sync(s: *Settings, c: *ui.Context, n: *panel.Nanolight, p: Palette, rows: []const RowKind) void {
-        switch (s.account) {
-            .signed_out, .starting => {
-                s.button(c, n, p, rows, .sync, if (s.account == .starting) "Signing In…" else "Sign In with Codegraff");
-                s.termsLine(c, n, p, rows);
-            },
-            .waiting => {
-                ui.text(c, "Approve in your browser…", .{ .size = 13.5, .weight = .medium, .color = p.text });
-                s.button(c, n, p, rows, .sync, "Cancel");
-            },
-            .signed_in => {
-                const who = if (s.email.len > 0) s.email else "your Codegraff account";
-                ui.textf(c, .{ .size = 13.5, .weight = .medium, .color = p.text }, "Synced as {s}", .{who});
-                s.button(c, n, p, rows, .sync, "Sign Out");
-            },
-        }
-    }
-
     fn termsLine(s: *Settings, c: *ui.Context, n: *panel.Nanolight, p: Palette, rows: []const RowKind) void {
         const on = isSel(rows, s.sel, .terms);
         ui.key(c, "terms");
@@ -311,12 +366,6 @@ pub const Settings = struct {
         ui.text(c, "Uses your Codegraff account; Codegraff's", .{ .size = 11.5, .color = p.sub.alpha(0.75) });
         ui.text(c, "Terms & Privacy", .{ .size = 11.5, .weight = .medium, .color = p.text.alpha(0.9) });
         ui.text(c, "apply", .{ .size = 11.5, .color = p.sub.alpha(0.75) });
-    }
-
-    fn updates(s: *Settings, c: *ui.Context, n: *panel.Nanolight, p: Palette, rows: []const RowKind) void {
-        ui.textf(c, .{ .size = 12.5, .color = p.sub }, "Nanolight {s}", .{s.version});
-        const text = if (s.ready) |v| c.print("Restart to Update to {s}", .{v}) else "Check for Updates";
-        s.button(c, n, p, rows, .updates, text);
     }
 
     fn button(s: *Settings, c: *ui.Context, n: *panel.Nanolight, p: Palette, rows: []const RowKind, kind: RowKind, text: []const u8) void {
