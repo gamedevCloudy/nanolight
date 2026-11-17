@@ -4,6 +4,20 @@
 const std = @import("std");
 const nanoui = @import("nanoui");
 const objc = nanoui.objc;
+const History = @import("clipboard.zig").History;
+
+/// One tick of the history (main.zig's timer): a single integer read while
+/// nothing new was copied. The count is noted even while off, so turning
+/// the history on never keeps a copy made while it was off.
+pub fn poll(h: *History) void {
+    const n = nanoui.clipboard.changeCount();
+    if (n == h.last_count) return;
+    h.last_count = n;
+    if (!h.on or concealed()) return;
+    const t = (nanoui.clipboard.readText(h.gpa) catch null) orelse return;
+    defer h.gpa.free(t);
+    h.push(t) catch {};
+}
 
 /// Whether what's on the clipboard asks not to be remembered: a secret
 /// (ConcealedType) or a copy only meant to be pasted once (TransientType).
@@ -20,6 +34,16 @@ fn marked(pb: objc.Object) bool {
     inline for (markers) |t|
         if (objc.msg(objc.BOOL, types, "containsObject:", .{objc.nsString(t)})) return true;
     return false;
+}
+
+test "a copy made while the history is off is never kept" {
+    var h: History = .{ .gpa = std.testing.allocator, .on = false };
+    defer h.deinit();
+    poll(&h);
+    try std.testing.expectEqual(nanoui.clipboard.changeCount(), h.last_count);
+    h.on = true;
+    poll(&h);
+    try std.testing.expectEqual(@as(usize, 0), h.items.items.len);
 }
 
 test "a password manager's copy is marked, a plain one isn't" {
