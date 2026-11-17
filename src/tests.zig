@@ -450,6 +450,30 @@ pub const Prefs = struct {
     fn noop(_: *anyopaque) void {}
 };
 
+test "typing clipboard lists the history row" {
+    const gpa = std.testing.allocator;
+    var ix: Index = .init(gpa);
+    defer ix.deinit();
+    ix.starters = &mac_starters;
+    var prefs: Prefs = .{};
+    prefs.init();
+    var s: view.Nanolight = .{ .index = &ix };
+    defer s.query.deinit();
+    s.host = prefs.host();
+    s.reveal();
+    var t: ui.Tester = undefined;
+    try t.init(gpa, .init(&s, view.Nanolight.view), .{ .width = view.width, .height = view.max_height, .dark = true });
+    defer t.deinit();
+    t.settle(1);
+    press(&t, &.{.{ .insert = "clipboard" }});
+    try std.testing.expect(t.hasText("Clipboard History"));
+    try std.testing.expectEqual(results.Kind.clipboard, s.res.rows[0].kind);
+    // Return is a no-op until clip/view gives the row its panel.
+    press(&t, &.{.{ .command = .insert_newline }});
+    t.settle(1);
+    try std.testing.expect(!s.settings_ui.open);
+}
+
 test "settings opens from ⌘,, from typing, and from the gear" {
     const gpa = std.testing.allocator;
     var ix: Index = .init(gpa);
