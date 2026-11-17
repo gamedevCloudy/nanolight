@@ -21,7 +21,7 @@ const Theme = @import("palette.zig").Theme;
 
 /// As tall as its sections, never past the window. Tighter Mac spacing
 /// fits file search, where searches open, Claude's row and the menu bar icon.
-pub const height: f32 = if (mac) 666 else 620;
+pub const height: f32 = if (mac) 674 else 620;
 
 pub const Settings = struct {
     open: bool = false,
@@ -130,7 +130,7 @@ pub const Settings = struct {
     }
 
     fn body(s: *Settings, c: *ui.Context, n: *panel.Nanolight, p: Palette, rows: []const RowKind) void {
-        const col = ui.div(c).column().wFull().px(20).pt(2).pb(6).gap(if (mac) 6 else 10).grow();
+        const col = ui.div(c).column().wFull().px(20).pt(2).pb(6).gap(if (mac) 4 else 10).grow();
         defer col.end();
         label(c, p, "Open Nanolight with");
         s.choices(c, n, p);
