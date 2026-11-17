@@ -85,6 +85,8 @@ pub const Nanolight = struct {
     /// The query the rows were built for.
     built: u64 = 1,
     host: ?Host = null,
+    /// The clipboard's recent texts, kept by the host (clipboard.zig); null when off.
+    history: ?*@import("clipboard.zig").History = null,
     /// Draws its own Liquid Glass (over a desktop nanoui painted, as the
     /// film does); otherwise the window's system glass is under it.
     own_glass: bool = false,
