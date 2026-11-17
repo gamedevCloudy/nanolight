@@ -16,6 +16,8 @@ pub fn poll(h: *History) void {
     if (!h.on or concealed()) return;
     const t = (nanoui.clipboard.readText(h.gpa) catch null) orelse return;
     defer h.gpa.free(t);
+    // The flag and the text are two reads: if a copy landed between them, drop this one; the next tick takes the new copy.
+    if (nanoui.clipboard.changeCount() != n) return;
     h.push(t) catch {};
 }
 
