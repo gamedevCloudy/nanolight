@@ -28,6 +28,7 @@ test {
     _ = @import("tests_files.zig");
     _ = @import("row_window.zig");
     _ = @import("answers.zig");
+    _ = @import("clipboard.zig");
     _ = @import("tests_panel.zig");
     switch (@import("builtin").os.tag) {
         .macos => {
