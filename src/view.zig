@@ -465,6 +465,10 @@ pub const Nanolight = struct {
                 ui.text(c, "Nanolight Settings", .{ .size = 13.5, .weight = .medium, .color = p.text });
                 ui.text(c, "Shortcut, sync, updates", .{ .size = 12, .color = p.sub.alpha(0.8) });
             },
+            .clipboard => {
+                ui.text(c, "Clipboard History", .{ .size = 13.5, .weight = .medium, .color = p.text });
+                ui.text(c, "Recent copies", .{ .size = 12, .color = p.sub.alpha(0.8) });
+            },
             .suggest => {
                 const w = s.web.get(r.web);
                 ui.richText(c, w, s.added(i, w, p), .{ .size = 13.5, .color = p.text.alpha(0.72), .truncate = .ellipsis });
@@ -487,7 +491,7 @@ pub const Nanolight = struct {
         }
         ui.spacer(c);
         if (i == s.sel) {
-            ui.text(c, if (r.kind == .app or r.kind == .file or r.kind == .settings or r.kind == .pane) "Open" else "Go", .{ .size = 12, .weight = .medium, .color = p.sub });
+            ui.text(c, if (r.kind == .app or r.kind == .file or r.kind == .settings or r.kind == .clipboard or r.kind == .pane) "Open" else "Go", .{ .size = 12, .weight = .medium, .color = p.sub });
             ui.kbd(c, "↩");
         } else if (i < 9) ui.textf(c, .{ .size = 12, .weight = .medium, .color = p.sub.alpha(0.5), .tabular = true }, "{s}{d}", .{ results.mod, i + 1 });
     }
@@ -523,6 +527,7 @@ pub const Nanolight = struct {
             .search_web => "globe",
             .suggest => "magnifyingglass",
             .settings => "gearshape",
+            .clipboard => "doc.on.clipboard",
             else => "app.dashed",
         }, .{ .size = if (big) 16 else 13, .weight = .medium, .color = p.text });
     }
@@ -609,6 +614,7 @@ pub const Nanolight = struct {
             .ask_grok, .ask_claude, .search_x => s.go(results.url(&s.url_buf, r.kind, s.query.text())),
             .search_web => s.search(s.query.text(), !s.searches_out),
             .settings => s.openSettings(),
+            .clipboard => {}, // the clipboard view opens it (clip/view)
             .pane => s.go(@import("settings_panes.zig").urls[r.app]),
             .suggest => {
                 // Its words fill the field, as a search box's would.
