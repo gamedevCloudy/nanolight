@@ -16,12 +16,12 @@ const Choice = shortcut.Choice;
 const Palette = panel.Palette;
 const mac = @import("builtin").os.tag == .macos;
 
-const RowKind = enum { choice, suggest, files, browser, claude, login, menu_bar, sync, terms, updates, welcome, quit, theme };
+const RowKind = enum { choice, suggest, files, cbhist, browser, claude, login, menu_bar, sync, terms, updates, welcome, quit, theme };
 const Theme = @import("palette.zig").Theme;
 
 /// As tall as its sections, never past the window. Tighter Mac spacing
 /// fits file search, where searches open, Claude's row and the menu bar icon.
-pub const height: f32 = if (mac) 666 else 620;
+pub const height: f32 = if (mac) 674 else 620;
 
 pub const Settings = struct {
     open: bool = false,
@@ -37,6 +37,7 @@ pub const Settings = struct {
     refused: bool = false,
     suggest: bool = true,
     files: bool = false,
+    cbhist: bool = false,
     /// Return sends searches to the browser (`Nanolight.searches_out`).
     browser: bool = false,
     claude: bool = false,
@@ -66,6 +67,7 @@ pub const Settings = struct {
     fn pull(s: *Settings, n: *panel.Nanolight) void {
         s.suggest = n.suggest_on;
         s.files = n.files_on;
+        s.cbhist = n.history != null and n.history.?.on;
         s.browser = n.searches_out;
         s.claude = n.claude_on;
         const h = s.hooks(n) orelse return;
@@ -81,7 +83,7 @@ pub const Settings = struct {
 
     pub fn view(s: *Settings, c: *ui.Context, n: *panel.Nanolight, p: Palette) void {
         s.pull(n);
-        const rows = rowList(s.account);
+        const rows = rowList(s.account, n.history != null);
         if (s.sel >= rows.len) s.sel = rows.len - 1;
         s.keys(c, n, rows);
         ui.key(c, "settings");
@@ -128,13 +130,14 @@ pub const Settings = struct {
     }
 
     fn body(s: *Settings, c: *ui.Context, n: *panel.Nanolight, p: Palette, rows: []const RowKind) void {
-        const col = ui.div(c).column().wFull().px(20).pt(2).pb(6).gap(if (mac) 6 else 10).grow();
+        const col = ui.div(c).column().wFull().px(20).pt(2).pb(6).gap(if (mac) 4 else 10).grow();
         defer col.end();
         label(c, p, "Open Nanolight with");
         s.choices(c, n, p);
         label(c, p, "Search");
         s.switchRow(c, n, p, rows, .suggest, "Google Suggestions");
         if (mac) s.switchRow(c, n, p, rows, .files, "File Search");
+        if (n.history != null) s.switchRow(c, n, p, rows, .cbhist, "Clipboard History");
         if (mac) s.switchRow(c, n, p, rows, .browser, "Open Searches in Browser");
         s.switchRow(c, n, p, rows, .claude, "Ask Claude");
         label(c, p, "This " ++ @import("results.zig").machine);
@@ -217,6 +220,7 @@ pub const Settings = struct {
         mark(c, p, switch (kind) {
             .suggest => s.suggest,
             .files => s.files,
+            .cbhist => s.cbhist,
             .browser => s.browser,
             .claude => s.claude,
             .login => s.login,
@@ -251,6 +255,11 @@ pub const Settings = struct {
                 s.files = n.files_on;
                 n.built = 1;
                 if (n.kv) |kv| kv.set(@import("files.zig").enabled_key, if (n.files_on) "1" else "0") catch {};
+            },
+            .cbhist => if (n.history) |hist| {
+                hist.setOn(!hist.on);
+                s.cbhist = hist.on;
+                if (n.kv) |kv| kv.set(@import("clipboard.zig").enabled_key, if (hist.on) "1" else "0") catch {};
             },
             .browser => {
                 n.searches_out = !n.searches_out;
@@ -371,7 +380,7 @@ pub const Settings = struct {
     /// Return on the selected row. The field would have taken it.
     pub fn activateSelected(s: *Settings, n: *panel.Nanolight) void {
         s.pull(n);
-        const rows = rowList(s.account);
+        const rows = rowList(s.account, n.history != null);
         if (s.sel >= rows.len) return;
         s.activate(n, rows[s.sel]);
     }
@@ -388,8 +397,8 @@ pub const Settings = struct {
         const h = s.hooks(n);
         switch (kind) {
             // ←/→ step through the four; Return records one's own.
-            .choice => if (mac) s.record(n, !s.recording) else s.nudge(n, rowList(s.account), 1),
-            .suggest, .files, .browser, .claude, .login, .menu_bar => s.flip(n, kind),
+            .choice => if (mac) s.record(n, !s.recording) else s.nudge(n, rowList(s.account, n.history != null), 1),
+            .suggest, .files, .cbhist, .browser, .claude, .login, .menu_bar => s.flip(n, kind),
             .sync => if (h) |host| switch (s.account) {
                 .signed_out => host.sign_in(host.ctx),
                 .waiting, .signed_in => host.sign_out(host.ctx),
@@ -419,10 +428,10 @@ pub fn loadClaude(kv: nanoui.kv.Store, gpa: std.mem.Allocator) bool {
     return std.mem.eql(u8, v, "1");
 }
 
-fn rowList(state: account.State) []const RowKind {
+fn rowList(state: account.State, hist: bool) []const RowKind {
     return switch (state) {
-        .signed_out, .starting => if (mac) &.{ .choice, .suggest, .files, .browser, .claude, .login, .menu_bar, .sync, .terms, .updates, .welcome, .quit, .theme } else &.{ .choice, .suggest, .claude, .login, .sync, .terms, .updates, .welcome, .quit, .theme },
-        .waiting, .signed_in => if (mac) &.{ .choice, .suggest, .files, .browser, .claude, .login, .menu_bar, .sync, .updates, .welcome, .quit, .theme } else &.{ .choice, .suggest, .claude, .login, .sync, .updates, .welcome, .quit, .theme },
+        .signed_out, .starting => if (mac and hist) &.{ .choice, .suggest, .files, .cbhist, .browser, .claude, .login, .menu_bar, .sync, .terms, .updates, .welcome, .quit, .theme } else if (mac) &.{ .choice, .suggest, .files, .browser, .claude, .login, .menu_bar, .sync, .terms, .updates, .welcome, .quit, .theme } else &.{ .choice, .suggest, .claude, .login, .sync, .terms, .updates, .welcome, .quit, .theme },
+        .waiting, .signed_in => if (mac and hist) &.{ .choice, .suggest, .files, .cbhist, .browser, .claude, .login, .menu_bar, .sync, .updates, .welcome, .quit, .theme } else if (mac) &.{ .choice, .suggest, .files, .browser, .claude, .login, .menu_bar, .sync, .updates, .welcome, .quit, .theme } else &.{ .choice, .suggest, .claude, .login, .sync, .updates, .welcome, .quit, .theme },
     };
 }
 
