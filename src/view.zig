@@ -364,6 +364,7 @@ pub const Nanolight = struct {
         const ns = s.index.suggestions(&sug);
         var web: [suggest.max_rows][]const u8 = undefined;
         s.res.claude = s.claude_on;
+        s.res.clipboard = s.history != null;
         s.res.build(s.query.text(), s.index, sug[0..ns], s.web.slices(&web), &s.found);
         if (s.res.n > 0 and s.res.rows[0].kind == .currency) {
             if (s.fx) |a| {

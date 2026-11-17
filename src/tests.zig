@@ -452,7 +452,7 @@ pub const Prefs = struct {
     fn noop(_: *anyopaque) void {}
 };
 
-test "typing clipboard lists the history row" {
+test "typing clipboard lists the history row only where a history exists" {
     const gpa = std.testing.allocator;
     var ix: Index = .init(gpa);
     defer ix.deinit();
@@ -468,12 +468,16 @@ test "typing clipboard lists the history row" {
     defer t.deinit();
     t.settle(1);
     press(&t, &.{.{ .insert = "clipboard" }});
+    try std.testing.expect(!t.hasText("Clipboard History"));
+    for (s.res.rows[0..s.res.n]) |row| try std.testing.expect(row.kind != .clipboard);
+    // With one, the row leads.
+    var hist: @import("clipboard.zig").History = .{ .gpa = gpa };
+    defer hist.deinit();
+    s.history = &hist;
+    s.fill();
+    t.settle(1);
     try std.testing.expect(t.hasText("Clipboard History"));
     try std.testing.expectEqual(results.Kind.clipboard, s.res.rows[0].kind);
-    // Return is a no-op until clip/view gives the row its panel.
-    press(&t, &.{.{ .command = .insert_newline }});
-    t.settle(1);
-    try std.testing.expect(!s.settings_ui.open);
 }
 
 test "settings opens from ⌘,, from typing, and from the gear" {

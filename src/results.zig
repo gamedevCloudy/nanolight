@@ -106,6 +106,8 @@ pub const Results = struct {
     n: usize = 0,
     /// Claude's row is listed, which Settings turns on.
     claude: bool = false,
+    /// The clipboard history's row is listed, where a history exists.
+    clipboard: bool = false,
     /// No query: the apps are suggestions, nothing else is listed.
     suggested: bool = false,
     /// The math's answer, as shown.
@@ -145,7 +147,7 @@ pub const Results = struct {
         var ranked: [max_apps]search.Ranked = undefined;
         const n = search.rankApps(query, ix, boost, &ranked);
         const settings = isSettings(query);
-        const clip = isClipboard(query);
+        const clip = r.clipboard and isClipboard(query);
         // Math and currency keep their answer and matching apps, without handoffs.
         if (r.n > 0 and (r.rows[0].kind == .calc or r.rows[0].kind == .currency)) {
             for (ranked[0..n]) |x| r.push(.{ .kind = .app, .app = x.index, .match = x.match });
@@ -336,6 +338,7 @@ test "math first, then apps; ask and search only without an answer" {
     try t.expectEqual(@as(u32, 1), r.rows[0].app);
     try t.expectEqual(Kind.settings, r.rows[1].kind);
     // "clipboard" and its other words list Nanolight's history row.
+    r.clipboard = true;
     for ([_][]const u8{ "clipboard", "Clip", "history", "paste history" }) |q| {
         r.build(q, &ix, &.{}, &.{}, &.{});
         var found = false;
@@ -343,6 +346,10 @@ test "math first, then apps; ask and search only without an answer" {
         try t.expect(found);
     }
     r.build("clipboards", &ix, &.{}, &.{}, &.{});
+    for (r.rows[0..r.n]) |row| try t.expect(row.kind != .clipboard);
+    // Without a history (no Mac) there's no row to list.
+    r.clipboard = false;
+    r.build("clipboard", &ix, &.{}, &.{}, &.{});
     for (r.rows[0..r.n]) |row| try t.expect(row.kind != .clipboard);
     // A full list of apps still ends with every handoff.
     var many_ix = try testIndex(t.allocator, &.{ "Safari", "Mail", "Maps", "Pages", "Calendar", "Calculator", "FaceTime" });
