@@ -138,12 +138,15 @@ pub const Nanolight = struct {
     preview_url: []const u8 = "",
     /// Settings, drawn in the panel in place of the rows.
     settings_ui: settings_view.Settings = .{},
+    /// The clipboard's history, drawn there too (clipboard_view.zig).
+    clip: @import("clipboard_view.zig").View = .{},
     ext: ?*@import("raycast_view.zig").Ext = null,
 
     /// Called as it is shown: the query selected, the keys its own.
     pub fn reveal(s: *Nanolight) void {
         s.back();
         s.settings_ui.hide();
+        s.clip.hide();
         s.shown +%= 1;
         // Suggestions follow what was opened since.
         s.built = 1;
@@ -155,6 +158,7 @@ pub const Nanolight = struct {
     /// The panel's height for what it shows.
     pub fn height(s: *const Nanolight) f32 {
         if (s.settings_ui.open) return settings_view.height;
+        if (s.clip.open) return rows_height;
         if (s.ext) |e| if (e.open) return e.height();
         if (s.previewing) return max_height;
         return rows_height;
@@ -194,6 +198,7 @@ pub const Nanolight = struct {
             return;
         };
         if (s.settings_ui.open) return s.settings_ui.inPanel(c, s, p);
+        if (s.clip.open) return s.clip.inPanel(c, s, p);
         // A Raycast extension's command, while it runs (raycast_view.zig).
         if (s.ext) |e| if (e.open) return e.panel(c, s, p);
 
@@ -243,6 +248,8 @@ pub const Nanolight = struct {
         }
         // ⌘,: Settings, as on the Mac. The comma never reaches the field.
         if (c.shortcut(.{ .key = ',', .cmd = true })) return s.openSettings();
+        // ⌘⇧V: the clipboard's history, "paste, but more".
+        if (c.shortcut(.{ .key = 'v', .cmd = true, .shift = true })) return s.openClipboard();
         // ⌘↩: a search in the browser rather than in the panel.
         if (c.shortcut(.{ .key = S.enter, .cmd = true })) s.activateOut(c);
         // Tab takes the faint completion, as → does.
@@ -637,6 +644,14 @@ pub const Nanolight = struct {
     pub fn openSettings(s: *Nanolight) void {
         s.back();
         s.settings_ui.show();
+    }
+
+    /// The history in place of the rows, the field its filter.
+    pub fn openClipboard(s: *Nanolight) void {
+        if (s.history == null) return;
+        s.back();
+        s.query.clear();
+        s.clip.show();
     }
 
     /// The rows again, the page gone.
