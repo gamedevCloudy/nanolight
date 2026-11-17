@@ -137,7 +137,7 @@ pub const Settings = struct {
     /// footer stays where it is.
     const Item = struct {
         what: enum { label, choices, toggle, info, note, button, terms },
-        /// Set on what the selection can land on; labels, info and notes stay null.
+        // Set for the items the keys select; labels, info and notes have none.
         row: ?RowKind = null,
         text: []const u8 = "",
         h: f32,
