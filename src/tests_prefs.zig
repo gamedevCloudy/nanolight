@@ -410,6 +410,12 @@ test "Clipboard History is a Settings switch: off clears what it holds, and the 
     try std.testing.expectEqual(back.y, t.findText("Back").?.y);
     const quit = t.findText("Quit Nanolight").?;
     try std.testing.expect(quit.y + quit.h <= back.y);
+    // ↑ back to row 0 brings the choices row back into view.
+    while (s.settings_ui.sel > 0) {
+        _ = t.shortcut(.{ .key = ui.Shortcut.up });
+        t.settle(1);
+    }
+    try std.testing.expect(t.containsText("Space"));
     try t.clickText("Clipboard History");
     t.settle(1);
     try std.testing.expect(!hist.on and hist.items.items.len == 0);

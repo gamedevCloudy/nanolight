@@ -137,7 +137,8 @@ pub const Settings = struct {
     /// footer stays where it is.
     const Item = struct {
         what: enum { label, choices, toggle, info, note, button, terms },
-        row: RowKind = .choice,
+        /// Set on what the selection can land on; labels, info and notes stay null.
+        row: ?RowKind = null,
         text: []const u8 = "",
         h: f32,
     };
@@ -157,7 +158,7 @@ pub const Settings = struct {
             }
         }.at;
         add(buf, &k, .{ .what = .label, .text = "Open Nanolight with", .h = 14 });
-        add(buf, &k, .{ .what = .choices, .h = 36 });
+        add(buf, &k, .{ .what = .choices, .row = .choice, .h = 36 });
         add(buf, &k, .{ .what = .label, .text = "Search", .h = 14 });
         add(buf, &k, .{ .what = .toggle, .row = .suggest, .text = "Google Suggestions", .h = th });
         if (mac) add(buf, &k, .{ .what = .toggle, .row = .files, .text = "File Search", .h = th });
@@ -171,7 +172,7 @@ pub const Settings = struct {
         switch (s.account) {
             .signed_out, .starting => {
                 add(buf, &k, .{ .what = .button, .row = .sync, .text = if (s.account == .starting) "Signing In…" else "Sign In with Codegraff", .h = 36 });
-                add(buf, &k, .{ .what = .terms, .h = 28 });
+                add(buf, &k, .{ .what = .terms, .row = .terms, .h = 28 });
             },
             .waiting => {
                 add(buf, &k, .{ .what = .info, .text = "Approve in your browser…", .h = 17 });
@@ -198,7 +199,7 @@ pub const Settings = struct {
         var sel = all.len - 1;
         for (all, 0..) |it, i| {
             heights[i] = it.h;
-            if (s.sel < rows.len and it.what != .label and it.row == rows[s.sel]) sel = i;
+            if (s.sel < rows.len and it.row == rows[s.sel]) sel = i;
         }
         const room = height - panel.header_h - panel.footer_h - 1 - pad;
         c.wants_wheel = true;
@@ -210,10 +211,10 @@ pub const Settings = struct {
         for (all[first..after]) |it| switch (it.what) {
             .label => label(c, p, it.text),
             .choices => s.choices(c, n, p),
-            .toggle => s.switchRow(c, n, p, rows, it.row, it.text),
+            .toggle => s.switchRow(c, n, p, rows, it.row.?, it.text),
             .info => ui.text(c, it.text, .{ .size = 13.5, .weight = .medium, .color = p.text }),
             .note => ui.text(c, it.text, .{ .size = 12.5, .color = p.sub }),
-            .button => s.button(c, n, p, rows, it.row, it.text),
+            .button => s.button(c, n, p, rows, it.row.?, it.text),
             .terms => s.termsLine(c, n, p, rows),
         };
         // More than fits: where the rows in view are in the list.
